@@ -1,7 +1,5 @@
-"""Package entry point for `python -m ssg`."""
+"""Execute the inner SSG package from a source checkout."""
 
-from .main import main
+from .cli import main
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+raise SystemExit(main())

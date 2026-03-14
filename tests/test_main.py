@@ -1,3 +1,4 @@
+from ssg import cli as cli_module
 from ssg import main as main_module
 from ssg.bench.test_harness import PerformanceValidationResult
 
@@ -49,3 +50,6 @@ def test_main_runs_gateway_branch(monkeypatch):
     assert DummyGateway.created.config.seed is None
     assert DummyGateway.created.ran == (1.5, True)
     assert DummyGateway.created.exported_to == "audit.json"
+
+def test_cli_module_reexports_main_entrypoint():
+    assert cli_module.main is main_module.main

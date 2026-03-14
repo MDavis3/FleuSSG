@@ -18,12 +18,12 @@ from ..core.constants import (
     SYNTHETIC_NOISE_AMPLITUDE_UV,
     SYNTHETIC_SPIKE_AMPLITUDE_UV,
 )
+from ..core.pipeline_runtime import PipelineRuntime, PipelineRuntimeConfig
 from ..core.data_types import ChannelMetrics, SanitizedFrame
-from ..ingestion.engine import IngestionEngine
-from ..ingestion.mock_telemetry import MockTelemetry, MockTelemetryConfig
-from ..sanitization.layer import SanitizationLayer
-from ..simulation.noise_models import ArtifactInjectionConfig, NoiseGenerator
-from ..validation.engine import ValidationEngine
+from ..ingestion.mock_telemetry import MockTelemetryConfig
+from ..simulation.noise_models import ArtifactInjectionConfig
+
+MILLISECONDS_PER_SECOND = 1000.0
 
 
 @dataclass(frozen=True)
@@ -111,36 +111,34 @@ class TestHarness:
         self.sample_rate = sample_rate_hz
         self.batch_size = batch_size
 
-        self._telemetry = MockTelemetry(
-            n_channels=n_channels,
-            sample_rate_hz=sample_rate_hz,
-            config=MockTelemetryConfig(
-                noise_amplitude_uv=noise_amplitude_uv,
-                spike_amplitude_uv=spike_amplitude_uv,
-                seed=seed,
+        self._runtime = PipelineRuntime(
+            config=PipelineRuntimeConfig(
+                n_channels=n_channels,
+                sample_rate_hz=sample_rate_hz,
+                batch_size=batch_size,
+                telemetry_config=MockTelemetryConfig(
+                    noise_amplitude_uv=noise_amplitude_uv,
+                    spike_amplitude_uv=spike_amplitude_uv,
+                    seed=seed,
+                ),
             ),
         )
-        self._ingestion = IngestionEngine(
-            n_channels=n_channels,
-            sample_rate_hz=sample_rate_hz,
-        )
-        self._sanitization = SanitizationLayer(
-            n_channels=n_channels,
-            sample_rate_hz=sample_rate_hz,
-        )
-        self._validation = ValidationEngine(
-            n_channels=n_channels,
-            sample_rate_hz=sample_rate_hz,
-        )
-        self._noise_generator = NoiseGenerator(
-            n_channels=n_channels,
-            sample_rate_hz=sample_rate_hz,
-            seed=seed,
-        )
+        self._noise_generator = self._runtime.noise_generator
 
         self._latencies: list[float] = []
         self._viable_counts: list[int] = []
         self._total_batches = 0
+
+    @staticmethod
+    def _artifact_config(multiplier: float) -> ArtifactInjectionConfig:
+        """Scale the default artifact rates for a benchmark run."""
+
+        return ArtifactInjectionConfig(
+            jaw_clench_prob=0.1 * multiplier,
+            electrode_drift_prob=0.05 * multiplier,
+            motion_spike_prob=0.02 * multiplier,
+            baseline_noise_uv=10.0,
+        )
 
     @staticmethod
     def _summarize_distribution(values: np.ndarray) -> DistributionSummary:
@@ -178,37 +176,28 @@ class TestHarness:
 
         self.reset()
         start_time = time.time()
+        artifact_config = self._artifact_config(artifact_rate_multiplier)
 
         for _ in range(n_batches):
             batch_start = time.perf_counter()
-            samples, timestamps = self._telemetry.generate_batch(self.batch_size)
+            batch = self._runtime.process_next_batch(
+                inject_artifacts=inject_artifacts,
+                artifact_config=artifact_config,
+            )
 
-            if inject_artifacts:
-                samples, _ = self._noise_generator.inject_artifacts(
-                    samples,
-                    config=ArtifactInjectionConfig(
-                        jaw_clench_prob=0.1 * artifact_rate_multiplier,
-                        electrode_drift_prob=0.05 * artifact_rate_multiplier,
-                        motion_spike_prob=0.02 * artifact_rate_multiplier,
-                        baseline_noise_uv=10.0,
-                    ),
-                )
-
-            self._ingestion.ingest_batch(samples, timestamps)
-            sanitized = self._sanitization.process(samples, timestamps)
-            metrics = self._validation.process(sanitized, timestamps)
-
-            latency_ms = (time.perf_counter() - batch_start) * 1000
+            latency_ms = (
+                time.perf_counter() - batch_start
+            ) * MILLISECONDS_PER_SECOND
             self._latencies.append(latency_ms)
-            self._viable_counts.append(metrics.viable_channel_count)
+            self._viable_counts.append(batch.metrics.viable_channel_count)
             self._total_batches += 1
 
             if callback is not None:
-                callback(metrics, latency_ms)
+                callback(batch.metrics, latency_ms)
 
         total_duration = time.time() - start_time
-        snr_array = metrics.snr
-        isi_array = metrics.isi_violation_rate
+        snr_array = batch.metrics.snr
+        isi_array = batch.metrics.isi_violation_rate
 
         return TestResults(
             total_batches=self._total_batches,
@@ -240,23 +229,16 @@ class TestHarness:
         """
         self.reset()
         batch_start = time.perf_counter()
-        samples, timestamps = self._telemetry.generate_batch(self.batch_size)
-
-        if inject_artifacts:
-            samples, _ = self._noise_generator.inject_artifacts(
-                samples,
-                config=ArtifactInjectionConfig(baseline_noise_uv=10.0),
-            )
-
-        self._ingestion.ingest_batch(samples, timestamps)
-        sanitized = self._sanitization.process(samples, timestamps)
-        metrics = self._validation.process(sanitized, timestamps)
-        latency_ms = (time.perf_counter() - batch_start) * 1000
+        batch = self._runtime.process_next_batch(
+            inject_artifacts=inject_artifacts,
+            artifact_config=ArtifactInjectionConfig(baseline_noise_uv=10.0),
+        )
+        latency_ms = (time.perf_counter() - batch_start) * MILLISECONDS_PER_SECOND
 
         return SingleBatchResult(
-            samples=samples,
-            sanitized_frame=sanitized,
-            metrics=metrics,
+            samples=batch.samples,
+            sanitized_frame=batch.sanitized_frame,
+            metrics=batch.metrics,
             latency_ms=latency_ms,
         )
 
@@ -290,11 +272,7 @@ class TestHarness:
     def reset(self) -> None:
         """Reset all pipeline components and accumulated run state."""
 
-        self._telemetry.reset()
-        self._ingestion.clear()
-        self._sanitization.reset()
-        self._validation.reset()
-        self._noise_generator.clear_history()
+        self._runtime.reset()
         self._latencies.clear()
         self._viable_counts.clear()
         self._total_batches = 0
