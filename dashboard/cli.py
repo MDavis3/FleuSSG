@@ -6,7 +6,7 @@ Refreshes at 2Hz for responsive monitoring without CPU overhead.
 """
 
 import time
-from typing import Optional, List, Deque
+from typing import Optional, Deque
 from collections import deque
 from dataclasses import dataclass
 
@@ -16,7 +16,6 @@ from rich.panel import Panel
 from rich.layout import Layout
 from rich.live import Live
 from rich.text import Text
-from rich.progress import Progress, BarColumn, TextColumn
 from rich import box
 
 from ..core.constants import (
@@ -276,7 +275,9 @@ class Dashboard:
                     time.sleep(refresh_interval)
 
             except KeyboardInterrupt:
-                pass
+                if stop_event:
+                    stop_event.set()
+                raise
 
     def print_summary(self) -> None:
         """Print final summary when dashboard closes."""

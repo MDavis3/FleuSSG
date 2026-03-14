@@ -1,4 +1,3 @@
-"""Ingestion module for SSG."""
+"""Ingestion components for Signal Stability Gateway."""
 
-from .engine import IngestionEngine
-from .mock_telemetry import MockTelemetry
+__all__: list[str] = []

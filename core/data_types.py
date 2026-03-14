@@ -7,7 +7,8 @@ All structures are optimized for vectorized processing.
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
+from .array_types import BoolVector, FloatMatrix, FloatVector
 from .constants import N_CHANNELS
 
 
@@ -29,6 +30,15 @@ ViabilityMask = np.ndarray  # shape (N_CHANNELS,), dtype=bool
 # DATACLASSES
 # =============================================================================
 
+
+def _expect_shape(name: str, value: np.ndarray, expected_shape: tuple[int, ...]) -> None:
+    """Raise a stable error when an array does not match its contract."""
+    if value.shape != expected_shape:
+        raise ValueError(
+            f"{name} must have shape {expected_shape}, got {value.shape}"
+        )
+
+
 @dataclass
 class SanitizedFrame:
     """
@@ -38,16 +48,26 @@ class SanitizedFrame:
     All arrays are shape (N, N_CHANNELS) where N is batch size.
     """
     timestamp_us: int
-    raw_unfiltered: np.ndarray    # shape (N, 1024) - Original signal preserved
-    lfp: np.ndarray               # shape (N, 1024) - Low-frequency (<300Hz)
-    spikes: np.ndarray            # shape (N, 1024) - High-frequency (300-3000Hz)
-    artifact_flags: np.ndarray    # shape (1024,) - Per-channel artifact detection
+    raw_unfiltered: FloatMatrix   # shape (N, 1024) - Original signal preserved
+    lfp: FloatMatrix              # shape (N, 1024) - Low-frequency (<300Hz)
+    spikes: FloatMatrix           # shape (N, 1024) - High-frequency (300-3000Hz)
+    artifact_flags: BoolVector    # shape (1024,) - Per-channel artifact detection
 
     def __post_init__(self):
         """Validate array shapes."""
-        assert self.lfp.shape[1] == N_CHANNELS, f"LFP must have {N_CHANNELS} channels"
-        assert self.spikes.shape[1] == N_CHANNELS, f"Spikes must have {N_CHANNELS} channels"
-        assert self.artifact_flags.shape == (N_CHANNELS,), "Artifact flags must be (1024,)"
+        if self.lfp.ndim != 2 or self.lfp.shape[1] != N_CHANNELS:
+            raise ValueError(
+                f"lfp must have shape (batch_size, {N_CHANNELS}), got {self.lfp.shape}"
+            )
+        if self.spikes.ndim != 2 or self.spikes.shape[1] != N_CHANNELS:
+            raise ValueError(
+                f"spikes must have shape (batch_size, {N_CHANNELS}), got {self.spikes.shape}"
+            )
+        if self.raw_unfiltered.shape != self.lfp.shape:
+            raise ValueError(
+                "raw_unfiltered must match the lfp batch shape"
+            )
+        _expect_shape("artifact_flags", self.artifact_flags, (N_CHANNELS,))
 
 
 @dataclass
@@ -61,27 +81,37 @@ class ChannelMetrics:
     - SpikeAgent for viability_mask
     """
     timestamp_us: int
-    snr: np.ndarray                    # shape (1024,) - Signal-to-Noise Ratio
-    firing_rate_hz: np.ndarray         # shape (1024,) - Spikes/sec (for TN-VAE)
-    isi_violation_rate: np.ndarray     # shape (1024,) - ISI violation percentage
-    impedance_kohm: np.ndarray         # shape (1024,) - Electrode impedance
-    viability_mask: np.ndarray         # shape (1024,), dtype=bool
+    snr: FloatVector                   # shape (1024,) - Signal-to-Noise Ratio
+    firing_rate_hz: FloatVector        # shape (1024,) - Spikes/sec (for TN-VAE)
+    isi_violation_rate: FloatVector    # shape (1024,) - ISI violation percentage
+    impedance_kohm: FloatVector        # shape (1024,) - Electrode impedance
+    viability_mask: BoolVector         # shape (1024,), dtype=bool
     viable_channel_count: int          # Count of viable channels
 
     def __post_init__(self):
         """Validate array shapes and compute derived fields."""
-        assert self.snr.shape == (N_CHANNELS,)
-        assert self.firing_rate_hz.shape == (N_CHANNELS,)
-        assert self.isi_violation_rate.shape == (N_CHANNELS,)
-        assert self.impedance_kohm.shape == (N_CHANNELS,)
-        assert self.viability_mask.shape == (N_CHANNELS,)
+        _expect_shape("snr", self.snr, (N_CHANNELS,))
+        _expect_shape("firing_rate_hz", self.firing_rate_hz, (N_CHANNELS,))
+        _expect_shape("isi_violation_rate", self.isi_violation_rate, (N_CHANNELS,))
+        _expect_shape("impedance_kohm", self.impedance_kohm, (N_CHANNELS,))
+        _expect_shape("viability_mask", self.viability_mask, (N_CHANNELS,))
 
-    def get_region_viability(self, start: int, end: int) -> tuple:
+    def get_region_viability(self, start: int, end: int) -> tuple[int, int, float]:
         """Get viability stats for a region slice."""
         region_mask = self.viability_mask[start:end]
         viable = int(np.sum(region_mask))
         total = end - start
         return viable, total, viable / total if total > 0 else 0.0
+
+
+@dataclass(frozen=True)
+class RegionMetrics:
+    """Aggregated channel-quality metrics for a channel slice."""
+    viable_count: int
+    total_count: int
+    viability_pct: float
+    mean_snr: float
+    mean_firing_rate_hz: float
 
 
 @dataclass
@@ -94,9 +124,9 @@ class AuditEvent:
     channel_id: Optional[int] = None
     severity: str = "INFO"
     message: str = ""
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         """Convert to dictionary for JSON export."""
         return {
             "timestamp_us": self.timestamp_us,

@@ -6,11 +6,39 @@ Export audit events to JSON and CSV formats for FDA compliance.
 
 import json
 import csv
+import os
 import time
-from typing import List, Optional, IO
+import tempfile
 from pathlib import Path
+from typing import IO, Literal
 
 from .audit_logger import AuditEvent, AuditLogger
+
+
+def _write_text_atomically(output_path: str, content: str) -> None:
+    """Write text via a temp file to avoid partially written exports."""
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    handle, temp_path = tempfile.mkstemp(
+        dir=target.parent,
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8', newline='') as temp_file:
+            temp_file.write(content)
+        os.replace(temp_path, target)
+    except Exception:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError as cleanup_error:
+                raise RuntimeError(
+                    f"Failed to clean up temporary export file {temp_path}"
+                ) from cleanup_error
+        raise
 
 
 class JSONExporter:
@@ -23,8 +51,8 @@ class JSONExporter:
 
     @staticmethod
     def export(
-        events: List[AuditEvent],
-        output_path: Optional[str] = None,
+        events: list[AuditEvent],
+        output_path: str | None = None,
         include_metadata: bool = True,
     ) -> str:
         """
@@ -54,7 +82,7 @@ class JSONExporter:
         json_str = json.dumps(output, indent=2)
 
         if output_path:
-            Path(output_path).write_text(json_str)
+            _write_text_atomically(output_path, json_str)
 
         return json_str
 
@@ -83,7 +111,7 @@ class JSONExporter:
         if include_counts:
             output['statistics'] = logger.get_counts()
 
-        Path(output_path).write_text(json.dumps(output, indent=2))
+        _write_text_atomically(output_path, json.dumps(output, indent=2))
 
 
 class CSVExporter:
@@ -95,7 +123,7 @@ class CSVExporter:
     """
 
     # CSV column headers
-    COLUMNS = [
+    COLUMNS = (
         'timestamp_us',
         'timestamp_iso',
         'event_type',
@@ -104,12 +132,12 @@ class CSVExporter:
         'channel_id',
         'batch_id',
         'metadata',
-    ]
+    )
 
     @staticmethod
     def export(
-        events: List[AuditEvent],
-        output_path: Optional[str] = None,
+        events: list[AuditEvent],
+        output_path: str | None = None,
         include_metadata: bool = True,
     ) -> str:
         """
@@ -126,7 +154,7 @@ class CSVExporter:
         import io
 
         output = io.StringIO()
-        columns = CSVExporter.COLUMNS.copy()
+        columns = list(CSVExporter.COLUMNS)
         if not include_metadata:
             columns.remove('metadata')
 
@@ -145,7 +173,7 @@ class CSVExporter:
         csv_str = output.getvalue()
 
         if output_path:
-            Path(output_path).write_text(csv_str)
+            _write_text_atomically(output_path, csv_str)
 
         return csv_str
 
@@ -175,7 +203,7 @@ class StreamingExporter:
     def __init__(
         self,
         output_path: str,
-        format: str = 'jsonl',
+        format: Literal['jsonl', 'csv'] = 'jsonl',
     ):
         """
         Initialize streaming exporter.
@@ -186,12 +214,12 @@ class StreamingExporter:
         """
         self.output_path = Path(output_path)
         self.format = format
-        self._file: Optional[IO] = None
+        self._file: IO[str] | None = None
         self._csv_writer = None
 
     def __enter__(self):
         """Open file for streaming."""
-        self._file = open(self.output_path, 'a', newline='')
+        self._file = open(self.output_path, 'a', newline='', encoding='utf-8')
 
         if self.format == 'csv' and self.output_path.stat().st_size == 0:
             # Write header for new CSV file

@@ -7,8 +7,8 @@ Designed for real-time streaming with zero-copy operations.
 
 import numpy as np
 from typing import Tuple, Optional, Callable
-import time
 
+from ..core.array_types import FloatMatrix, FloatVector, TimestampVector
 from ..core.ring_buffer import RingBuffer
 from ..core.constants import (
     N_CHANNELS,
@@ -74,7 +74,7 @@ class IngestionEngine:
         """Total frames ingested since initialization."""
         return self._total_frames_ingested
 
-    def ingest_frame(self, samples: np.ndarray, timestamp_us: int) -> None:
+    def ingest_frame(self, samples: FloatVector, timestamp_us: int) -> None:
         """
         Push a single frame (1024 samples) into the ring buffer.
 
@@ -84,14 +84,16 @@ class IngestionEngine:
             samples: shape (n_channels,) - one sample per channel
             timestamp_us: Microsecond timestamp
         """
-        assert samples.shape == (self.n_channels,), \
-            f"Expected shape ({self.n_channels},), got {samples.shape}"
+        if samples.shape != (self.n_channels,):
+            raise ValueError(
+                f"Expected shape ({self.n_channels},), got {samples.shape}"
+            )
 
         self._buffer.push(samples, timestamp_us)
         self._total_frames_ingested += 1
         self._last_timestamp_us = timestamp_us
 
-    def ingest_batch(self, samples: np.ndarray, timestamps: np.ndarray) -> None:
+    def ingest_batch(self, samples: FloatMatrix, timestamps: TimestampVector) -> None:
         """
         Push a batch of frames into the ring buffer.
 
@@ -101,16 +103,22 @@ class IngestionEngine:
             samples: shape (N, n_channels) - batch of samples
             timestamps: shape (N,) - microsecond timestamps
         """
-        assert samples.shape[1] == self.n_channels, \
-            f"Expected {self.n_channels} channels, got {samples.shape[1]}"
-        assert samples.shape[0] == timestamps.shape[0], \
-            "Samples and timestamps must have same length"
+        if samples.ndim != 2:
+            raise ValueError(
+                f"samples must be 2D with shape (batch, {self.n_channels})"
+            )
+        if samples.shape[1] != self.n_channels:
+            raise ValueError(
+                f"Expected {self.n_channels} channels, got {samples.shape[1]}"
+            )
+        if samples.shape[0] != timestamps.shape[0]:
+            raise ValueError("Samples and timestamps must have same length")
 
         self._buffer.push_batch(samples, timestamps)
         self._total_frames_ingested += samples.shape[0]
         self._last_timestamp_us = timestamps[-1]
 
-    def get_batch(self, n_samples: int) -> Tuple[np.ndarray, np.ndarray]:
+    def get_batch(self, n_samples: int) -> Tuple[FloatMatrix, TimestampVector]:
         """
         Retrieve last N samples for batch processing.
 
@@ -122,7 +130,7 @@ class IngestionEngine:
         """
         return self._buffer.get_last(n_samples)
 
-    def get_latest_batch(self) -> Tuple[np.ndarray, np.ndarray]:
+    def get_latest_batch(self) -> Tuple[FloatMatrix, TimestampVector]:
         """
         Get the default batch size (BATCH_SIZE from constants).
 
@@ -131,7 +139,7 @@ class IngestionEngine:
         """
         return self._buffer.get_last(BATCH_SIZE)
 
-    def poll(self) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    def poll(self) -> Optional[Tuple[FloatMatrix, TimestampVector]]:
         """
         Poll the data source for new data (if configured).
 

@@ -1,9 +1,3 @@
-"""
-Validation Engine for Signal Stability Gateway
+"""Signal validation components for Signal Stability Gateway."""
 
-Computes real-time channel viability metrics using vectorized operations.
-"""
-
-from .engine import ValidationEngine
-
-__all__ = ['ValidationEngine']
+__all__: list[str] = []

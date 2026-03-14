@@ -13,3 +13,6 @@ htmlcov/
 .venv/
 venv/
 *.log
+.desloppify/
+.ruff_cache/
+scorecard.png

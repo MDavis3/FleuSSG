@@ -6,7 +6,7 @@ No memory allocation after initialization.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from typing import Tuple
 
 
 class RingBuffer:
