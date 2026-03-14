@@ -14,6 +14,8 @@ from ..core.constants import (
     N_CHANNELS,
     SAMPLE_RATE_HZ,
     BATCH_SIZE,
+    SYNTHETIC_NOISE_AMPLITUDE_UV,
+    SYNTHETIC_SPIKE_AMPLITUDE_UV,
 )
 from ..ingestion.mock_telemetry import MockTelemetry
 from ..ingestion.engine import IngestionEngine
@@ -56,8 +58,8 @@ class TestHarness:
         n_channels: int = N_CHANNELS,
         sample_rate_hz: int = SAMPLE_RATE_HZ,
         batch_size: int = BATCH_SIZE,
-        noise_amplitude_uv: float = 10.0,
-        spike_amplitude_uv: float = 100.0,
+        noise_amplitude_uv: float = SYNTHETIC_NOISE_AMPLITUDE_UV,
+        spike_amplitude_uv: float = SYNTHETIC_SPIKE_AMPLITUDE_UV,
         seed: Optional[int] = None,
     ):
         """

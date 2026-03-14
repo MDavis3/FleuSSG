@@ -15,6 +15,8 @@ from ..core.constants import (
     BATCH_SIZE,
     SYNTHETIC_SPIKE_RATE_HZ,
     SPIKE_TEMPLATE_DURATION_SEC,
+    SYNTHETIC_NOISE_AMPLITUDE_UV,
+    SYNTHETIC_SPIKE_AMPLITUDE_UV,
 )
 
 
@@ -37,8 +39,8 @@ class MockTelemetry:
         self,
         n_channels: int = N_CHANNELS,
         sample_rate_hz: int = SAMPLE_RATE_HZ,
-        noise_amplitude_uv: float = 10.0,
-        spike_amplitude_uv: float = 100.0,
+        noise_amplitude_uv: float = SYNTHETIC_NOISE_AMPLITUDE_UV,
+        spike_amplitude_uv: float = SYNTHETIC_SPIKE_AMPLITUDE_UV,
         spike_rate_hz: float = SYNTHETIC_SPIKE_RATE_HZ,
         seed: Optional[int] = None,
     ):
