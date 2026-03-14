@@ -6,6 +6,7 @@ Export audit events to JSON and CSV formats for FDA compliance.
 
 import json
 import csv
+import io
 import os
 import time
 import tempfile
@@ -151,8 +152,6 @@ class CSVExporter:
         Returns:
             CSV string
         """
-        import io
-
         output = io.StringIO()
         columns = list(CSVExporter.COLUMNS)
         if not include_metadata:

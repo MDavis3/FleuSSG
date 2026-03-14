@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-ssg = "ssg.main:main"
+ssg = "ssg.cli:main"
 
 [tool.setuptools]
 packages = [
@@ -40,4 +40,4 @@ packages = [
 ]
 
 [tool.setuptools.package-dir]
-ssg = "."
+ssg = "ssg"

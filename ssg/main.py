@@ -1,16 +1,16 @@
 """CLI entry point and runtime orchestration for the SSG demo pipeline."""
 
 import argparse
-import time
 import threading
+import time
 from dataclasses import dataclass
 from typing import Sequence
 
-from .core.constants import (
-    N_CHANNELS,
-    SAMPLE_RATE_HZ,
-    BATCH_SIZE,
-    BATCH_DURATION_SEC,
+from .core.constants import BATCH_DURATION_SEC, BATCH_SIZE, N_CHANNELS, SAMPLE_RATE_HZ
+from .core.pipeline_runtime import (
+    PipelineDependencies,
+    PipelineRuntime,
+    PipelineRuntimeConfig,
 )
 from .core.data_types import ChannelMetrics
 from .bench.test_harness import TestHarness
@@ -22,6 +22,9 @@ from .audit.event_types import EventSeverity, EventType
 from .audit.exporters import JSONExporter
 from .sanitization.layer import SanitizationLayer
 from .validation.engine import ValidationEngine
+
+MILLISECONDS_PER_SECOND = 1000.0
+LATENCY_WARNING_THRESHOLD_MS = 5.0
 
 
 @dataclass
@@ -36,6 +39,8 @@ class GatewayConfig:
 @dataclass
 class GatewayDependencies:
     """Optional collaborators for the SSG runtime."""
+
+    runtime: PipelineRuntime | None = None
     telemetry: MockTelemetry | None = None
     ingestion: IngestionEngine | None = None
     sanitization: SanitizationLayer | None = None
@@ -53,29 +58,26 @@ class SignalStabilityGateway:
         dependencies: GatewayDependencies | None = None,
     ):
         self.config = config or GatewayConfig()
-        self.n_channels = self.config.n_channels
-        self.sample_rate = self.config.sample_rate_hz
         self._dependencies = dependencies or GatewayDependencies()
-
-        self._telemetry = self._dependencies.telemetry or MockTelemetry(
-            n_channels=self.n_channels,
-            sample_rate_hz=self.sample_rate,
-            config=MockTelemetryConfig(seed=self.config.seed),
+        runtime_dependencies = PipelineDependencies(
+            telemetry=self._dependencies.telemetry,
+            ingestion=self._dependencies.ingestion,
+            sanitization=self._dependencies.sanitization,
+            validation=self._dependencies.validation,
         )
-        self._ingestion = self._dependencies.ingestion or IngestionEngine(
-            n_channels=self.n_channels,
-            sample_rate_hz=self.sample_rate,
-        )
-        self._sanitization = self._dependencies.sanitization or SanitizationLayer(
-            n_channels=self.n_channels,
-            sample_rate_hz=self.sample_rate,
-        )
-        self._validation = self._dependencies.validation or ValidationEngine(
-            n_channels=self.n_channels,
-            sample_rate_hz=self.sample_rate,
+        self._runtime = self._dependencies.runtime or PipelineRuntime(
+            config=PipelineRuntimeConfig(
+                n_channels=self.config.n_channels,
+                sample_rate_hz=self.config.sample_rate_hz,
+                batch_size=BATCH_SIZE,
+                telemetry_config=MockTelemetryConfig(seed=self.config.seed),
+            ),
+            dependencies=runtime_dependencies,
         )
         self._dashboard = self._dependencies.dashboard
         self._logger = self._dependencies.logger or AuditLogger()
+        self.n_channels = self._runtime.config.n_channels
+        self.sample_rate = self._runtime.config.sample_rate_hz
 
         self._running = False
         self._stop_event = threading.Event()
@@ -175,20 +177,17 @@ class SignalStabilityGateway:
     def _process_batch(self) -> tuple[ChannelMetrics, float]:
         """Process a single telemetry batch end to end."""
         batch_start = time.perf_counter()
-        samples, timestamps = self._telemetry.generate_batch(BATCH_SIZE)
+        batch = self._runtime.process_next_batch()
+        latency_ms = (time.perf_counter() - batch_start) * MILLISECONDS_PER_SECOND
+        metrics = batch.metrics
 
-        self._ingestion.ingest_batch(samples, timestamps)
-        sanitized = self._sanitization.process(samples, timestamps)
-        metrics = self._validation.process(sanitized, timestamps)
-        latency_ms = (time.perf_counter() - batch_start) * 1000
-
-        if sanitized.artifact_flags.any():
-            n_affected = int(sanitized.artifact_flags.sum())
+        if batch.sanitized_frame.artifact_flags.any():
+            n_affected = int(batch.sanitized_frame.artifact_flags.sum())
             self._logger.log_artifact(
                 EventType.ARTIFACT_DETECTED,
                 affected_channels=n_affected,
                 amplitude=1.0,
-                duration_ms=BATCH_DURATION_SEC * 1000,
+                duration_ms=BATCH_DURATION_SEC * MILLISECONDS_PER_SECOND,
                 batch_id=self._batch_count,
             )
             if self._dashboard is not None:
@@ -198,10 +197,13 @@ class SignalStabilityGateway:
                     "WARNING",
                 )
 
-        if latency_ms > 5.0:
+        if latency_ms > LATENCY_WARNING_THRESHOLD_MS:
             self._logger.log(
                 EventType.DATA_LATENCY_WARNING,
-                f"Batch latency {latency_ms:.1f}ms exceeds 5ms target",
+                (
+                    f"Batch latency {latency_ms:.1f}ms exceeds "
+                    f"{LATENCY_WARNING_THRESHOLD_MS:.0f}ms target"
+                ),
                 severity=EventSeverity.WARNING,
                 context=AuditEventContext(batch_id=self._batch_count),
             )
@@ -314,13 +316,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             harness = TestHarness(seed=args.seed)
 
             if args.validate_performance:
-                print("Running performance validation...")
                 results = harness.validate_performance(
                     target_latency_ms=5.0,
                     duration_sec=args.duration,
                 )
+                print("Running performance validation...")
+                print()
                 print(
-                    f"\nPerformance Validation: {'PASSED' if results.passed else 'FAILED'}"
+                    f"Performance Validation: {'PASSED' if results.passed else 'FAILED'}"
                 )
                 print(f"  Average Latency: {results.avg_latency_ms:.2f}ms")
                 print(f"  Max Latency: {results.max_latency_ms:.2f}ms")
@@ -333,22 +336,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 duration_sec=args.duration,
                 inject_artifacts=not args.no_artifacts,
             )
-            print("\nTest Results:")
-            print(f"  Total Batches: {results.total_batches}")
-            print(f"  Duration: {results.total_duration_sec:.2f}s")
-            print(f"  Avg Latency: {results.avg_latency_ms:.2f}ms")
-            print(f"  Max Latency: {results.max_latency_ms:.2f}ms")
             print(
-                "  Viable Channels: "
-                f"{results.min_viable_channels}-{results.max_viable_channels} "
-                f"(avg: {results.avg_viable_channels:.0f})"
-            )
-            print(f"  Artifacts Injected: {results.total_artifacts_injected}")
-            print(
-                "  SNR: "
-                f"min={results.snr_distribution.min:.2f}, "
-                f"max={results.snr_distribution.max:.2f}, "
-                f"mean={results.snr_distribution.mean:.2f}"
+                "\n".join(
+                    [
+                        "",
+                        "Test Results:",
+                        f"  Total Batches: {results.total_batches}",
+                        f"  Duration: {results.total_duration_sec:.2f}s",
+                        f"  Avg Latency: {results.avg_latency_ms:.2f}ms",
+                        f"  Max Latency: {results.max_latency_ms:.2f}ms",
+                        (
+                            "  Viable Channels: "
+                            f"{results.min_viable_channels}-{results.max_viable_channels} "
+                            f"(avg: {results.avg_viable_channels:.0f})"
+                        ),
+                        f"  Artifacts Injected: {results.total_artifacts_injected}",
+                        (
+                            "  SNR: "
+                            f"min={results.snr_distribution.min:.2f}, "
+                            f"max={results.snr_distribution.max:.2f}, "
+                            f"mean={results.snr_distribution.mean:.2f}"
+                        ),
+                    ]
+                )
             )
             return 0
 

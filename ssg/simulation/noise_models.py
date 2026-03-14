@@ -22,6 +22,8 @@ from ..core.constants import (
     MOTION_SPIKE_PROBABILITY,
 )
 
+MILLISECONDS_PER_SECOND = 1000.0
+
 
 class ArtifactType(Enum):
     """Types of biological artifacts."""
@@ -168,7 +170,9 @@ class NoiseGenerator:
         """
         batch_size = samples.shape[0]
         duration_ms = self.rng.uniform(50, 500)
-        duration_samples = int(duration_ms * self.sample_rate / 1000)
+        duration_samples = int(
+            duration_ms * self.sample_rate / MILLISECONDS_PER_SECOND
+        )
 
         if duration_samples >= batch_size:
             return None

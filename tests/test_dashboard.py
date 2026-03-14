@@ -46,6 +46,19 @@ def test_dashboard_creates_region_and_event_views():
     assert "ARTIFACT" in event_panel.renderable.plain
 
 
+def test_dashboard_waiting_views_are_explicit():
+    dashboard = Dashboard()
+
+    region_table = dashboard._create_region_table()
+    stats_panel = dashboard._create_stats_panel()
+    event_panel = dashboard._create_event_log()
+
+    assert region_table.row_count == 1
+    assert "Waiting for data..." in str(region_table.columns[0]._cells[0])
+    assert "Waiting for data..." in str(stats_panel.renderable)
+    assert "No events yet..." in event_panel.renderable.plain
+
+
 def test_dashboard_run_live_updates_and_prints_summary(monkeypatch):
     updated_layouts = []
 

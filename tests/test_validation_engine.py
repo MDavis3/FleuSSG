@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from ssg.core.constants import N_CHANNELS
-from ssg.core.data_types import SanitizedFrame
+from ssg.core.data_types import ChannelMetrics, SanitizedFrame
 from ssg.validation.engine import ValidationEngine
 
 
@@ -46,3 +46,17 @@ def test_sanitized_frame_rejects_mismatched_batch_shapes():
             spikes=np.zeros((3, N_CHANNELS), dtype=np.float32),
             artifact_flags=np.zeros(N_CHANNELS, dtype=bool),
         )
+
+
+def test_channel_metrics_accept_custom_channel_width():
+    metrics = ChannelMetrics(
+        timestamp_us=0,
+        snr=np.ones(8, dtype=np.float32),
+        firing_rate_hz=np.zeros(8, dtype=np.float32),
+        isi_violation_rate=np.zeros(8, dtype=np.float32),
+        impedance_kohm=np.full(8, 1000.0, dtype=np.float32),
+        viability_mask=np.array([True, False, True, True, False, True, False, True]),
+        viable_channel_count=5,
+    )
+
+    assert metrics.get_region_viability(0, 4) == (3, 4, 0.75)

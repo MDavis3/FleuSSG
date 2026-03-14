@@ -1,13 +1,10 @@
-"""
-Data Types for Signal Stability Gateway
+"""Shared dtypes and dataclasses used across the SSG pipeline."""
 
-Defines NumPy dtypes and dataclasses for the SSG pipeline.
-All structures are optimized for vectorized processing.
-"""
-
-import numpy as np
 from dataclasses import dataclass, field
 from typing import Any, Optional
+
+import numpy as np
+
 from .array_types import BoolVector, FloatMatrix, FloatVector
 from .constants import N_CHANNELS
 
@@ -16,11 +13,18 @@ from .constants import N_CHANNELS
 # NUMPY DTYPES
 # =============================================================================
 
-# Primary data frame dtype - one sample across all channels
-ChannelFrameDtype = np.dtype([
-    ('timestamp_us', np.uint64),              # Microsecond timestamp
-    ('samples', np.float32, (N_CHANNELS,)),   # 1024 channels of raw voltage
-])
+def make_channel_frame_dtype(n_channels: int = N_CHANNELS) -> np.dtype:
+    """Create a structured dtype for one timestamped multi-channel sample."""
+
+    return np.dtype(
+        [
+            ("timestamp_us", np.uint64),
+            ("samples", np.float32, (n_channels,)),
+        ]
+    )
+
+
+ChannelFrameDtype = make_channel_frame_dtype()
 
 # Viability mask - boolean array for downstream AI
 ViabilityMask = np.ndarray  # shape (N_CHANNELS,), dtype=bool
@@ -39,6 +43,12 @@ def _expect_shape(name: str, value: np.ndarray, expected_shape: tuple[int, ...])
         )
 
 
+def _expect_matrix(name: str, value: np.ndarray) -> None:
+    """Require a matrix input for batch-oriented arrays."""
+    if value.ndim != 2:
+        raise ValueError(f"{name} must be 2D, got {value.ndim}D")
+
+
 @dataclass
 class SanitizedFrame:
     """
@@ -55,19 +65,19 @@ class SanitizedFrame:
 
     def __post_init__(self):
         """Validate array shapes."""
-        if self.lfp.ndim != 2 or self.lfp.shape[1] != N_CHANNELS:
+        _expect_matrix("raw_unfiltered", self.raw_unfiltered)
+        _expect_matrix("lfp", self.lfp)
+        _expect_matrix("spikes", self.spikes)
+        expected_shape = self.raw_unfiltered.shape
+        if self.lfp.shape != expected_shape:
             raise ValueError(
-                f"lfp must have shape (batch_size, {N_CHANNELS}), got {self.lfp.shape}"
+                f"lfp must match raw_unfiltered shape {expected_shape}, got {self.lfp.shape}"
             )
-        if self.spikes.ndim != 2 or self.spikes.shape[1] != N_CHANNELS:
+        if self.spikes.shape != expected_shape:
             raise ValueError(
-                f"spikes must have shape (batch_size, {N_CHANNELS}), got {self.spikes.shape}"
+                f"spikes must match raw_unfiltered shape {expected_shape}, got {self.spikes.shape}"
             )
-        if self.raw_unfiltered.shape != self.lfp.shape:
-            raise ValueError(
-                "raw_unfiltered must match the lfp batch shape"
-            )
-        _expect_shape("artifact_flags", self.artifact_flags, (N_CHANNELS,))
+        _expect_shape("artifact_flags", self.artifact_flags, (expected_shape[1],))
 
 
 @dataclass
@@ -90,11 +100,16 @@ class ChannelMetrics:
 
     def __post_init__(self):
         """Validate array shapes and compute derived fields."""
-        _expect_shape("snr", self.snr, (N_CHANNELS,))
-        _expect_shape("firing_rate_hz", self.firing_rate_hz, (N_CHANNELS,))
-        _expect_shape("isi_violation_rate", self.isi_violation_rate, (N_CHANNELS,))
-        _expect_shape("impedance_kohm", self.impedance_kohm, (N_CHANNELS,))
-        _expect_shape("viability_mask", self.viability_mask, (N_CHANNELS,))
+        n_channels = len(self.viability_mask)
+        _expect_shape("snr", self.snr, (n_channels,))
+        _expect_shape("firing_rate_hz", self.firing_rate_hz, (n_channels,))
+        _expect_shape("isi_violation_rate", self.isi_violation_rate, (n_channels,))
+        _expect_shape("impedance_kohm", self.impedance_kohm, (n_channels,))
+        _expect_shape("viability_mask", self.viability_mask, (n_channels,))
+        if not 0 <= self.viable_channel_count <= n_channels:
+            raise ValueError(
+                "viable_channel_count must be within the channel count contract"
+            )
 
     def get_region_viability(self, start: int, end: int) -> tuple[int, int, float]:
         """Get viability stats for a region slice."""

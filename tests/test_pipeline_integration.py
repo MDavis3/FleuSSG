@@ -38,3 +38,18 @@ def test_pipeline_harness_resets_artifact_history_between_runs():
 
     assert first.total_artifacts_injected > 0
     assert second.total_artifacts_injected == 0
+
+
+def test_pipeline_harness_supports_non_default_channel_counts():
+    harness = PipelineHarness(
+        n_channels=16,
+        sample_rate_hz=10_000,
+        batch_size=100,
+        seed=5,
+    )
+
+    batch = harness.run_single_batch(inject_artifacts=False)
+
+    assert batch.samples.shape == (100, 16)
+    assert batch.sanitized_frame.artifact_flags.shape == (16,)
+    assert batch.metrics.viability_mask.shape == (16,)
