@@ -43,20 +43,25 @@ def design_filter_bank(sample_rate_hz: int) -> FilterBank:
         if freq >= nyquist:
             continue
         b, a = signal.iirnotch(freq, NOTCH_QUALITY_FACTOR, sample_rate_hz)
-        notch_sos_list.append(np.array([[b[0], b[1], b[2], a[0], a[1], a[2]]]))
+        notch_sos_list.append(
+            np.array(
+                [[b[0], b[1], b[2], a[0], a[1], a[2]]],
+                dtype=np.float32,
+            )
+        )
 
     lfp_sos = signal.butter(
         BUTTERWORTH_ORDER,
         LFP_CUTOFF_HZ / nyquist,
         btype="low",
         output="sos",
-    )
+    ).astype(np.float32)
     spike_sos = signal.butter(
         BUTTERWORTH_ORDER,
         [SPIKE_LOWCUT_HZ / nyquist, SPIKE_HIGHCUT_HZ / nyquist],
         btype="band",
         output="sos",
-    )
+    ).astype(np.float32)
     return FilterBank(
         notch_sos_list=notch_sos_list,
         lfp_sos=lfp_sos,
@@ -69,11 +74,25 @@ def init_filter_state(filter_bank: FilterBank, n_channels: int) -> SOSFilterStat
 
     notch_zi = []
     for sos in filter_bank.notch_sos_list:
-        zi = signal.sosfilt_zi(sos)
+        zi = np.asarray(signal.sosfilt_zi(sos), dtype=np.float32)
         notch_zi.append(np.tile(zi[:, :, np.newaxis], (1, 1, n_channels)).copy())
 
-    lfp_zi = np.tile(signal.sosfilt_zi(filter_bank.lfp_sos)[:, :, np.newaxis], (1, 1, n_channels))
-    spike_zi = np.tile(signal.sosfilt_zi(filter_bank.spike_sos)[:, :, np.newaxis], (1, 1, n_channels))
+    lfp_zi = np.tile(
+        np.asarray(signal.sosfilt_zi(filter_bank.lfp_sos), dtype=np.float32)[
+            :,
+            :,
+            np.newaxis,
+        ],
+        (1, 1, n_channels),
+    )
+    spike_zi = np.tile(
+        np.asarray(signal.sosfilt_zi(filter_bank.spike_sos), dtype=np.float32)[
+            :,
+            :,
+            np.newaxis,
+        ],
+        (1, 1, n_channels),
+    )
     return SOSFilterState(
         notch_zi=notch_zi,
         lfp_zi=lfp_zi.copy(),
@@ -88,7 +107,7 @@ def apply_filter_bank(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Run a batch through the notch, LFP, and spike filters."""
 
-    notched = samples.astype(np.float64)
+    notched = np.asarray(samples, dtype=np.float32)
     for index, sos in enumerate(filter_bank.notch_sos_list):
         notched, filter_state.notch_zi[index] = signal.sosfilt(
             sos,
@@ -109,4 +128,8 @@ def apply_filter_bank(
         axis=0,
         zi=filter_state.spike_zi,
     )
-    return notched, lfp, spikes
+    return (
+        np.asarray(notched, dtype=np.float32),
+        np.asarray(lfp, dtype=np.float32),
+        np.asarray(spikes, dtype=np.float32),
+    )

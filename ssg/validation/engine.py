@@ -5,7 +5,12 @@ import numpy as np
 from ..core.array_types import FloatVector, TimestampVector
 from ..core.constants import N_CHANNELS, SAMPLE_RATE_HZ, VALIDATION_WINDOW_SEC
 from ..core.data_types import ChannelMetrics, RegionMetrics, SanitizedFrame
-from .metrics import build_viability_mask, summarize_region, update_ema_snr
+from .metrics import (
+    build_viability_mask,
+    summarize_region,
+    summarize_spike_band,
+    update_ema_snr_from_summary,
+)
 from .spike_analysis import (
     SpikeBuffer,
     compute_firing_rate,
@@ -39,10 +44,12 @@ class ValidationEngine:
         """Process one sanitized batch and compute quality metrics."""
 
         batch_duration_sec = sanitized.spikes.shape[0] / self.sample_rate
+        spike_band_summary = summarize_spike_band(sanitized.spikes)
         spike_channels, spike_times, spike_amps = detect_spikes(
             sanitized.spikes,
             timestamps,
             self.sample_rate,
+            summary=spike_band_summary,
         )
         self._update_spike_history(
             spike_channels,
@@ -52,8 +59,8 @@ class ValidationEngine:
             batch_duration_sec,
         )
 
-        snr, self._ema_noise, self._ema_signal = update_ema_snr(
-            sanitized.spikes,
+        snr, self._ema_noise, self._ema_signal = update_ema_snr_from_summary(
+            spike_band_summary,
             self._ema_noise,
             self._ema_signal,
             self._batch_count,

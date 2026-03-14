@@ -113,6 +113,12 @@ DASHBOARD_REFRESH_HZ: float = 2.0
 # Maximum events to display in log
 MAX_EVENT_LOG_SIZE: int = 10
 
+# Millisecond conversion used throughout runtime reporting
+MILLISECONDS_PER_SECOND: float = 1000.0
+
+# Soft real-time processing target for one batch
+LATENCY_WARNING_THRESHOLD_MS: float = 5.0
+
 # Region definitions for high-density array (channel slices)
 REGION_DEFINITIONS: dict = {
     "Cortex L1-3": (0, 256),

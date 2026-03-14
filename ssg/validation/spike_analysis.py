@@ -7,10 +7,9 @@ import numpy as np
 from ..core.array_types import ChannelIndexVector, FloatMatrix, FloatVector, TimestampVector
 from ..core.constants import (
     ISI_REFRACTORY_PERIOD_US,
-    MAD_TO_STD_FACTOR,
     MAX_SPIKES_IN_WINDOW,
-    SPIKE_DETECTION_THRESHOLD_MAD,
 )
+from .metrics import SpikeBandSummary, summarize_spike_band
 
 
 @dataclass
@@ -105,6 +104,7 @@ def detect_spikes(
     spike_band: FloatMatrix,
     timestamps: TimestampVector,
     sample_rate: int,
+    summary: SpikeBandSummary | None = None,
 ) -> tuple[ChannelIndexVector, TimestampVector, FloatVector]:
     """Detect spikes using local minima and a refractory window."""
     batch_size = spike_band.shape[0]
@@ -115,10 +115,8 @@ def detect_spikes(
             np.array([], dtype=np.float32),
         )
 
-    median = np.median(spike_band, axis=0)
-    mad = np.median(np.abs(spike_band - median), axis=0)
-    mad = np.maximum(mad, 1e-6)
-    threshold = median + SPIKE_DETECTION_THRESHOLD_MAD * mad * MAD_TO_STD_FACTOR
+    batch_summary = summary or summarize_spike_band(spike_band)
+    threshold = batch_summary.detection_threshold
 
     is_local_min = (
         (spike_band[1:-1] < spike_band[:-2]) &

@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from ssg.validation.metrics import summarize_spike_band
 from ssg.validation.spike_analysis import (
     SpikeBuffer,
     compute_firing_rate,
@@ -29,11 +30,13 @@ def test_detect_spikes_filters_same_channel_hits_inside_refractory_window():
     spike_band = np.zeros((5, 1), dtype=np.float32)
     spike_band[:, 0] = np.array([0.0, -10.0, 0.0, -9.0, 0.0], dtype=np.float32)
     timestamps = np.arange(5, dtype=np.uint64) * 500
+    summary = summarize_spike_band(spike_band)
 
     channels, spike_timestamps, amplitudes = detect_spikes(
         spike_band,
         timestamps,
         sample_rate=2000,
+        summary=summary,
     )
 
     assert channels.tolist() == [0]

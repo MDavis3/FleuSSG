@@ -42,7 +42,7 @@ class SanitizationLayer:
         """Sanitize one sample batch through the streaming DSP pipeline."""
 
         filter_state = self._ensure_filter_state()
-        raw_unfiltered = samples.copy()
+        raw_unfiltered = samples.astype(np.float32, copy=True)
         notched, lfp, spikes = apply_filter_bank(samples, self._filter_bank, filter_state)
         artifact_flags, self._ema_sigma, self._rolling_count = update_artifact_state(
             notched,
@@ -53,9 +53,9 @@ class SanitizationLayer:
 
         return SanitizedFrame(
             timestamp_us=int(timestamps[0]) if len(timestamps) > 0 else 0,
-            raw_unfiltered=raw_unfiltered.astype(np.float32),
-            lfp=lfp.astype(np.float32),
-            spikes=spikes.astype(np.float32),
+            raw_unfiltered=raw_unfiltered,
+            lfp=lfp.astype(np.float32, copy=False),
+            spikes=spikes.astype(np.float32, copy=False),
             artifact_flags=artifact_flags,
         )
 

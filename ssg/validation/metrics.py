@@ -1,4 +1,6 @@
-﻿"""Pure metric helpers for validation."""
+"""Pure metric helpers for validation."""
+
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -10,8 +12,51 @@ from ..core.constants import (
     ISI_VIOLATION_LIMIT,
     MAD_TO_STD_FACTOR,
     SNR_THRESHOLD,
+    SPIKE_DETECTION_THRESHOLD_MAD,
 )
 from ..core.data_types import ChannelMetrics, RegionMetrics
+
+
+@dataclass(frozen=True)
+class SpikeBandSummary:
+    """Robust per-channel summary statistics for one spike-band batch."""
+
+    median: FloatVector
+    mad: FloatVector
+    detection_threshold: FloatVector
+    batch_noise: FloatVector
+    batch_signal: FloatVector
+
+
+def summarize_spike_band(spike_band: FloatMatrix) -> SpikeBandSummary:
+    """Summarize the spike band once so downstream stages can reuse it."""
+
+    median = np.median(spike_band, axis=0).astype(np.float32, copy=False)
+    absolute_deviation = np.abs(spike_band - median)
+    mad = np.maximum(
+        np.median(absolute_deviation, axis=0),
+        1e-6,
+    ).astype(np.float32, copy=False)
+    batch_noise = np.maximum(
+        mad * MAD_TO_STD_FACTOR,
+        1e-6,
+    ).astype(np.float32, copy=False)
+
+    signal_rank = max(int(np.floor(0.95 * (spike_band.shape[0] - 1))), 0)
+    absolute_band = np.abs(spike_band)
+    batch_signal = np.partition(absolute_band, signal_rank, axis=0)[
+        signal_rank
+    ].astype(np.float32, copy=False)
+    detection_threshold = (
+        median + SPIKE_DETECTION_THRESHOLD_MAD * batch_noise
+    ).astype(np.float32, copy=False)
+    return SpikeBandSummary(
+        median=median,
+        mad=mad,
+        detection_threshold=detection_threshold,
+        batch_noise=batch_noise,
+        batch_signal=batch_signal,
+    )
 
 
 def update_ema_snr(
@@ -22,20 +67,31 @@ def update_ema_snr(
 ) -> tuple[FloatVector, FloatVector, FloatVector]:
     """Update EMA-backed noise and signal estimates and return SNR."""
 
-    median = np.median(spike_band, axis=0)
-    mad = np.median(np.abs(spike_band - median), axis=0)
-    batch_noise = np.maximum(mad * MAD_TO_STD_FACTOR, 1e-6)
-    batch_signal = np.percentile(np.abs(spike_band), 95, axis=0)
+    return update_ema_snr_from_summary(
+        summarize_spike_band(spike_band),
+        ema_noise,
+        ema_signal,
+        batch_count,
+    )
+
+
+def update_ema_snr_from_summary(
+    summary: SpikeBandSummary,
+    ema_noise: FloatVector,
+    ema_signal: FloatVector,
+    batch_count: int,
+) -> tuple[FloatVector, FloatVector, FloatVector]:
+    """Update EMA-backed noise and signal estimates from precomputed stats."""
 
     if batch_count == 0:
-        next_noise = batch_noise.astype(np.float32)
-        next_signal = batch_signal.astype(np.float32)
+        next_noise = summary.batch_noise.astype(np.float32, copy=False)
+        next_signal = summary.batch_signal.astype(np.float32, copy=False)
     else:
         next_noise = (
-            EMA_ALPHA * batch_noise + (1 - EMA_ALPHA) * ema_noise
+            EMA_ALPHA * summary.batch_noise + (1 - EMA_ALPHA) * ema_noise
         ).astype(np.float32)
         next_signal = (
-            EMA_ALPHA * batch_signal + (1 - EMA_ALPHA) * ema_signal
+            EMA_ALPHA * summary.batch_signal + (1 - EMA_ALPHA) * ema_signal
         ).astype(np.float32)
 
     snr = next_signal / next_noise

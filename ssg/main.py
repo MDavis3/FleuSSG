@@ -6,7 +6,14 @@ import time
 from dataclasses import dataclass
 from typing import Sequence
 
-from .core.constants import BATCH_DURATION_SEC, BATCH_SIZE, N_CHANNELS, SAMPLE_RATE_HZ
+from .core.constants import (
+    BATCH_DURATION_SEC,
+    BATCH_SIZE,
+    LATENCY_WARNING_THRESHOLD_MS,
+    MILLISECONDS_PER_SECOND,
+    N_CHANNELS,
+    SAMPLE_RATE_HZ,
+)
 from .core.pipeline_runtime import (
     PipelineDependencies,
     PipelineRuntime,
@@ -15,6 +22,11 @@ from .core.pipeline_runtime import (
 from .core.data_types import ChannelMetrics
 from .bench.test_harness import TestHarness
 from .dashboard.cli import Dashboard
+from .dashboard.messages import (
+    format_artifact_event_message,
+    format_latency_warning_message,
+)
+from .dashboard.snapshot import capture_dashboard_snapshot
 from .ingestion.engine import IngestionEngine
 from .ingestion.mock_telemetry import MockTelemetry, MockTelemetryConfig
 from .audit.audit_logger import AuditEventContext, AuditLogger
@@ -22,9 +34,6 @@ from .audit.event_types import EventSeverity, EventType
 from .audit.exporters import JSONExporter
 from .sanitization.layer import SanitizationLayer
 from .validation.engine import ValidationEngine
-
-MILLISECONDS_PER_SECOND = 1000.0
-LATENCY_WARNING_THRESHOLD_MS = 5.0
 
 
 @dataclass
@@ -193,20 +202,23 @@ class SignalStabilityGateway:
             if self._dashboard is not None:
                 self._dashboard.add_event(
                     "ARTIFACT",
-                    f"{n_affected} channels affected",
+                    format_artifact_event_message(n_affected),
                     "WARNING",
                 )
 
         if latency_ms > LATENCY_WARNING_THRESHOLD_MS:
+            warning_message = format_latency_warning_message(
+                self._batch_count,
+                latency_ms,
+            )
             self._logger.log(
                 EventType.DATA_LATENCY_WARNING,
-                (
-                    f"Batch latency {latency_ms:.1f}ms exceeds "
-                    f"{LATENCY_WARNING_THRESHOLD_MS:.0f}ms target"
-                ),
+                warning_message,
                 severity=EventSeverity.WARNING,
                 context=AuditEventContext(batch_id=self._batch_count),
             )
+            if self._dashboard is not None:
+                self._dashboard.add_event("LATENCY", warning_message, "WARNING")
 
         self._batch_count += 1
         return metrics, latency_ms
@@ -283,6 +295,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help='Random seed',
     )
 
+    snapshot_parser = subparsers.add_parser(
+        'snapshot',
+        help='Render one dashboard snapshot with numeric specs',
+    )
+    snapshot_parser.add_argument(
+        '--batches',
+        type=int,
+        default=10,
+        help='Number of batches to process before rendering the snapshot',
+    )
+    snapshot_parser.add_argument(
+        '--seed',
+        type=int,
+        default=42,
+        help='Random seed for reproducibility',
+    )
+    snapshot_parser.add_argument(
+        '--width',
+        type=int,
+        default=160,
+        help='Console width for the rendered dashboard frame',
+    )
+
     return parser
 
 
@@ -317,7 +352,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             if args.validate_performance:
                 results = harness.validate_performance(
-                    target_latency_ms=5.0,
+                    target_latency_ms=LATENCY_WARNING_THRESHOLD_MS,
                     duration_sec=args.duration,
                 )
                 print("Running performance validation...")
@@ -360,6 +395,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ]
                 )
             )
+            return 0
+
+        if args.command == 'snapshot':
+            snapshot = capture_dashboard_snapshot(
+                seed=args.seed,
+                batches=args.batches,
+                width=args.width,
+            )
+            print(snapshot.to_text())
             return 0
 
         parser.error(f"Unknown command: {args.command}")

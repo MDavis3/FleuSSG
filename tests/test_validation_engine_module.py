@@ -4,7 +4,13 @@ import pytest
 from ssg.core.constants import N_CHANNELS
 from ssg.core.data_types import ChannelMetrics, SanitizedFrame
 from ssg.validation.engine import ValidationEngine
-from ssg.validation.metrics import build_viability_mask, summarize_region, update_ema_snr
+from ssg.validation.metrics import (
+    build_viability_mask,
+    summarize_region,
+    summarize_spike_band,
+    update_ema_snr,
+    update_ema_snr_from_summary,
+)
 
 
 def test_validation_engine_updates_impedance_and_computes_region_metrics():
@@ -90,6 +96,35 @@ def test_validation_metric_helpers_update_snr_and_region_summary():
 
     assert region.viable_count == 1
     assert region.mean_snr == pytest.approx(4.75)
+
+
+def test_validation_metric_helpers_reuse_precomputed_batch_summary():
+    spike_band = np.array(
+        [
+            [1.0, 2.0],
+            [3.0, 4.0],
+            [5.0, 6.0],
+            [7.0, 8.0],
+        ],
+        dtype=np.float32,
+    )
+    summary = summarize_spike_band(spike_band)
+
+    direct = update_ema_snr(
+        spike_band,
+        np.ones(2, dtype=np.float32),
+        np.zeros(2, dtype=np.float32),
+        batch_count=0,
+    )
+    reused = update_ema_snr_from_summary(
+        summary,
+        np.ones(2, dtype=np.float32),
+        np.zeros(2, dtype=np.float32),
+        batch_count=0,
+    )
+
+    for direct_values, reused_values in zip(direct, reused):
+        np.testing.assert_allclose(direct_values, reused_values)
 
 
 def test_validation_metric_helpers_apply_viability_criteria():

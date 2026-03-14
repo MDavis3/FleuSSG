@@ -5,10 +5,11 @@ Generates synthetic 1024-channel neural data for pipeline validation.
 Includes realistic spike patterns and configurable noise levels.
 """
 
-import numpy as np
-from typing import Tuple, Optional
 from dataclasses import dataclass
 import time
+from typing import Optional, Tuple
+
+import numpy as np
 
 from ..core.constants import (
     N_CHANNELS,
@@ -72,13 +73,16 @@ class MockTelemetry:
 
         # Pre-compute spike template (biphasic extracellular spike)
         self._spike_template = self._create_spike_template()
+        self._scaled_spike_template = self._spike_template * np.float32(
+            self.spike_amplitude
+        )
 
         # Per-channel spike rates (some variation)
         self._channel_spike_rates = self.rng.uniform(
             0.5 * self.spike_rate,
             1.5 * self.spike_rate,
             size=n_channels
-        )
+        ).astype(np.float32)
 
         # Timestamp tracking
         self._start_time_us: Optional[int] = None
@@ -105,7 +109,7 @@ class MockTelemetry:
         # Normalize to unit amplitude
         template = template / np.abs(template).max()
 
-        return template
+        return template.astype(np.float32)
 
     def generate_batch(
         self,
@@ -122,8 +126,9 @@ class MockTelemetry:
         """
         # Generate background noise
         samples = self.rng.standard_normal(
-            (batch_size, self.n_channels)
-        ).astype(np.float32) * self.noise_amplitude
+            (batch_size, self.n_channels),
+            dtype=np.float32,
+        ) * np.float32(self.noise_amplitude)
 
         # Add spikes to each channel
         samples = self._add_spikes(samples, batch_size)
@@ -150,28 +155,42 @@ class MockTelemetry:
 
         Uses Poisson process for spike timing.
         """
-        template_len = len(self._spike_template)
+        template_len = len(self._scaled_spike_template)
         duration_sec = batch_size / self.sample_rate
         max_start = batch_size - template_len + 1
 
         if max_start <= 0:
             return samples
 
-        spike_counts = self.rng.poisson(self._channel_spike_rates * duration_sec)
+        spike_counts = self.rng.poisson(
+            self._channel_spike_rates * duration_sec
+        ).astype(np.int32, copy=False)
         active_channels = np.flatnonzero(spike_counts)
         if len(active_channels) == 0:
             return samples
 
-        spike_starts = np.zeros((batch_size, self.n_channels), dtype=np.float32)
+        active_counts = spike_counts[active_channels]
+        total_spikes = int(active_counts.sum())
+        spike_times = self.rng.integers(
+            0,
+            max_start,
+            size=total_spikes,
+            dtype=np.int32,
+        )
+        spike_channels = np.repeat(
+            active_channels.astype(np.intp, copy=False),
+            active_counts,
+        )
+        amplitude_factors = self.rng.uniform(
+            0.7,
+            1.3,
+            size=total_spikes,
+        ).astype(np.float32)
 
-        for ch in active_channels:
-            n_spikes = int(spike_counts[ch])
-            spike_times = self.rng.integers(0, max_start, size=n_spikes)
-            amplitude_factors = self.rng.uniform(0.7, 1.3, size=n_spikes).astype(np.float32)
-            np.add.at(spike_starts[:, ch], spike_times, amplitude_factors)
+        spike_starts = np.zeros_like(samples)
+        np.add.at(spike_starts, (spike_times, spike_channels), amplitude_factors)
 
-        template = self._spike_template.astype(np.float32) * self.spike_amplitude
-        for offset, weight in enumerate(template):
+        for offset, weight in enumerate(self._scaled_spike_template):
             end = batch_size - offset
             samples[offset:offset + end] += spike_starts[:end] * weight
 
