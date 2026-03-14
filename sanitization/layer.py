@@ -12,9 +12,10 @@ OPTIMIZED: Uses scipy.signal.sosfilt for vectorized, numerically stable filterin
 
 import numpy as np
 from scipy import signal
-from typing import Tuple, Optional
+from typing import Optional
 from dataclasses import dataclass
 
+from ..core.array_types import BoolVector, FloatMatrix, FloatVector, TimestampVector
 from ..core.constants import (
     N_CHANNELS,
     SAMPLE_RATE_HZ,
@@ -38,8 +39,8 @@ class SOSFilterState:
     Uses Second-Order Sections (SOS) format for numerical stability.
     """
     notch_zi: list  # List of zi states for each notch filter
-    lfp_zi: np.ndarray  # Lowpass filter state
-    spike_zi: np.ndarray  # Bandpass filter state
+    lfp_zi: FloatMatrix  # Lowpass filter state
+    spike_zi: FloatMatrix  # Bandpass filter state
 
 
 class SanitizationLayer:
@@ -163,8 +164,8 @@ class SanitizationLayer:
 
     def process(
         self,
-        samples: np.ndarray,
-        timestamps: np.ndarray,
+        samples: FloatMatrix,
+        timestamps: TimestampVector,
     ) -> SanitizedFrame:
         """
         Process a batch of samples through the sanitization pipeline.
@@ -224,7 +225,7 @@ class SanitizationLayer:
             artifact_flags=artifact_flags,
         )
 
-    def _detect_artifacts(self, data: np.ndarray) -> np.ndarray:
+    def _detect_artifacts(self, data: FloatMatrix) -> BoolVector:
         """
         Detect artifacts using Tanh-scaling with rolling sigma.
 
@@ -258,9 +259,9 @@ class SanitizationLayer:
 
     def apply_tanh_scaling(
         self,
-        data: np.ndarray,
-        artifact_flags: np.ndarray,
-    ) -> np.ndarray:
+        data: FloatMatrix,
+        artifact_flags: BoolVector,
+    ) -> FloatMatrix:
         """
         Apply Tanh-scaling to attenuate artifacts while preserving signal shape.
 
@@ -290,7 +291,7 @@ class SanitizationLayer:
 
         return result
 
-    def get_rolling_sigma(self) -> np.ndarray:
+    def get_rolling_sigma(self) -> FloatVector:
         """Get current rolling sigma estimates per channel."""
         return self._ema_sigma.copy()
 

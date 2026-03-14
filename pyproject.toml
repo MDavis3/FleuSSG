@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "signal-stability-gateway"
+version = "0.1.0"
+description = "Prototype neural-signal simulation, validation, and CLI monitoring toolkit."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "Signal Yield" }
+]
+dependencies = [
+  "numpy>=1.24.0",
+  "scipy>=1.10.0",
+  "rich>=13.0.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0"
+]
+
+[project.scripts]
+ssg = "ssg.main:main"
+
+[tool.setuptools]
+packages = [
+  "ssg",
+  "ssg.audit",
+  "ssg.bench",
+  "ssg.core",
+  "ssg.dashboard",
+  "ssg.ingestion",
+  "ssg.sanitization",
+  "ssg.simulation",
+  "ssg.validation"
+]
+
+[tool.setuptools.package-dir]
+ssg = "."

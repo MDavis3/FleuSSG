@@ -7,6 +7,7 @@ Includes realistic spike patterns and configurable noise levels.
 
 import numpy as np
 from typing import Tuple, Optional
+from dataclasses import dataclass
 import time
 
 from ..core.constants import (
@@ -18,6 +19,15 @@ from ..core.constants import (
     SYNTHETIC_NOISE_AMPLITUDE_UV,
     SYNTHETIC_SPIKE_AMPLITUDE_UV,
 )
+
+
+@dataclass(frozen=True)
+class MockTelemetryConfig:
+    """Tunable parameters for synthetic telemetry generation."""
+    noise_amplitude_uv: float = SYNTHETIC_NOISE_AMPLITUDE_UV
+    spike_amplitude_uv: float = SYNTHETIC_SPIKE_AMPLITUDE_UV
+    spike_rate_hz: float = SYNTHETIC_SPIKE_RATE_HZ
+    seed: Optional[int] = None
 
 
 class MockTelemetry:
@@ -39,10 +49,7 @@ class MockTelemetry:
         self,
         n_channels: int = N_CHANNELS,
         sample_rate_hz: int = SAMPLE_RATE_HZ,
-        noise_amplitude_uv: float = SYNTHETIC_NOISE_AMPLITUDE_UV,
-        spike_amplitude_uv: float = SYNTHETIC_SPIKE_AMPLITUDE_UV,
-        spike_rate_hz: float = SYNTHETIC_SPIKE_RATE_HZ,
-        seed: Optional[int] = None,
+        config: Optional[MockTelemetryConfig] = None,
     ):
         """
         Initialize mock telemetry generator.
@@ -50,32 +57,31 @@ class MockTelemetry:
         Args:
             n_channels: Number of channels to simulate
             sample_rate_hz: Sampling rate
-            noise_amplitude_uv: Background noise RMS in microvolts
-            spike_amplitude_uv: Spike peak amplitude in microvolts
-            spike_rate_hz: Average spike rate per channel
-            seed: Random seed for reproducibility
+            config: Synthetic telemetry configuration
         """
+        telemetry_config = config or MockTelemetryConfig()
+
         self.n_channels = n_channels
         self.sample_rate = sample_rate_hz
-        self.noise_amplitude = noise_amplitude_uv
-        self.spike_amplitude = spike_amplitude_uv
-        self.spike_rate = spike_rate_hz
+        self.noise_amplitude = telemetry_config.noise_amplitude_uv
+        self.spike_amplitude = telemetry_config.spike_amplitude_uv
+        self.spike_rate = telemetry_config.spike_rate_hz
 
         # Random number generator
-        self.rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(telemetry_config.seed)
 
         # Pre-compute spike template (biphasic extracellular spike)
         self._spike_template = self._create_spike_template()
 
         # Per-channel spike rates (some variation)
         self._channel_spike_rates = self.rng.uniform(
-            0.5 * spike_rate_hz,
-            1.5 * spike_rate_hz,
+            0.5 * self.spike_rate,
+            1.5 * self.spike_rate,
             size=n_channels
         )
 
         # Timestamp tracking
-        self._start_time_us = int(time.time() * 1_000_000)
+        self._start_time_us: Optional[int] = None
         self._sample_counter = 0
 
     def _create_spike_template(self) -> np.ndarray:
@@ -124,6 +130,8 @@ class MockTelemetry:
 
         # Generate timestamps
         sample_interval_us = int(1_000_000 / self.sample_rate)
+        if self._start_time_us is None:
+            self._start_time_us = int(time.time() * 1_000_000)
         start_ts = self._start_time_us + self._sample_counter * sample_interval_us
         timestamps = start_ts + np.arange(batch_size) * sample_interval_us
 
@@ -144,27 +152,28 @@ class MockTelemetry:
         """
         template_len = len(self._spike_template)
         duration_sec = batch_size / self.sample_rate
+        max_start = batch_size - template_len + 1
 
-        for ch in range(self.n_channels):
-            # Number of spikes in this batch (Poisson)
-            n_spikes = self.rng.poisson(self._channel_spike_rates[ch] * duration_sec)
+        if max_start <= 0:
+            return samples
 
-            if n_spikes == 0:
-                continue
+        spike_counts = self.rng.poisson(self._channel_spike_rates * duration_sec)
+        active_channels = np.flatnonzero(spike_counts)
+        if len(active_channels) == 0:
+            return samples
 
-            # Random spike times (ensuring template fits)
-            max_start = batch_size - template_len
-            if max_start <= 0:
-                continue
+        spike_starts = np.zeros((batch_size, self.n_channels), dtype=np.float32)
 
+        for ch in active_channels:
+            n_spikes = int(spike_counts[ch])
             spike_times = self.rng.integers(0, max_start, size=n_spikes)
+            amplitude_factors = self.rng.uniform(0.7, 1.3, size=n_spikes).astype(np.float32)
+            np.add.at(spike_starts[:, ch], spike_times, amplitude_factors)
 
-            # Add spikes with amplitude variation
-            for st in spike_times:
-                amplitude_factor = self.rng.uniform(0.7, 1.3)
-                samples[st:st + template_len, ch] += (
-                    self._spike_template * self.spike_amplitude * amplitude_factor
-                )
+        template = self._spike_template.astype(np.float32) * self.spike_amplitude
+        for offset, weight in enumerate(template):
+            end = batch_size - offset
+            samples[offset:offset + end] += spike_starts[:end] * weight
 
         return samples
 
@@ -180,7 +189,7 @@ class MockTelemetry:
 
     def reset(self) -> None:
         """Reset timestamp counter."""
-        self._start_time_us = int(time.time() * 1_000_000)
+        self._start_time_us = None
         self._sample_counter = 0
 
     def get_elapsed_time_sec(self) -> float:

@@ -1,9 +1,3 @@
-"""
-Dashboard for Signal Stability Gateway
+"""Dashboard components for Signal Stability Gateway."""
 
-Real-time CLI visualization using Rich library.
-"""
-
-from .cli import Dashboard
-
-__all__ = ['Dashboard']
+__all__: list[str] = []
