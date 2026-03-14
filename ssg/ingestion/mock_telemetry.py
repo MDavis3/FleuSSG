@@ -10,6 +10,7 @@ import time
 from typing import Optional, Tuple
 
 import numpy as np
+from scipy import signal
 
 from ..core.constants import (
     N_CHANNELS,
@@ -190,9 +191,15 @@ class MockTelemetry:
         spike_starts = np.zeros_like(samples)
         np.add.at(spike_starts, (spike_times, spike_channels), amplitude_factors)
 
-        for offset, weight in enumerate(self._scaled_spike_template):
-            end = batch_size - offset
-            samples[offset:offset + end] += spike_starts[:end] * weight
+        samples += np.asarray(
+            signal.fftconvolve(
+                spike_starts,
+                self._scaled_spike_template[:, np.newaxis],
+                mode="full",
+                axes=0,
+            )[:batch_size],
+            dtype=np.float32,
+        )
 
         return samples
 
