@@ -66,6 +66,33 @@ def test_sanitization_helpers_cover_filter_bank_and_artifact_updates():
     assert artifact_flags.shape == (2,)
 
 
+def test_artifact_state_supports_transposed_sample_axis():
+    data = np.array(
+        [
+            [0.0, 2.0, 4.0, 6.0],
+            [1.0, 3.0, 5.0, 7.0],
+        ],
+        dtype=np.float32,
+    )
+    baseline_sigma = np.full(2, 50.0, dtype=np.float32)
+
+    flags_row_major, sigma_row_major, rolling_row_major = update_artifact_state(
+        data.T,
+        baseline_sigma,
+        rolling_count=0,
+    )
+    flags_col_major, sigma_col_major, rolling_col_major = update_artifact_state(
+        data,
+        baseline_sigma,
+        rolling_count=0,
+        sample_axis=1,
+    )
+
+    np.testing.assert_array_equal(flags_col_major, flags_row_major)
+    np.testing.assert_allclose(sigma_col_major, sigma_row_major)
+    assert rolling_col_major == rolling_row_major == 4
+
+
 def test_artifact_helper_scaling_returns_unmodified_data_when_no_flags():
     data = np.array([[2.0, -2.0]], dtype=np.float32)
     scaled = apply_tanh_scaling(

@@ -29,9 +29,9 @@ class FilterBank:
 class SOSFilterState:
     """Streaming SOS state for the notch, LFP, and spike filters."""
 
-    notch_zi: FloatMatrix
-    lfp_zi: FloatMatrix
-    spike_zi: FloatMatrix
+    notch_zi: np.ndarray
+    lfp_zi: np.ndarray
+    spike_zi: np.ndarray
 
 
 def design_filter_bank(sample_rate_hz: int) -> FilterBank:

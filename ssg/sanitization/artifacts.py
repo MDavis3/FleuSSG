@@ -10,11 +10,12 @@ def update_artifact_state(
     data: FloatMatrix,
     ema_sigma: FloatVector,
     rolling_count: int,
+    sample_axis: int = 0,
 ) -> tuple[BoolVector, FloatVector, int]:
     """Update the rolling sigma estimate and return artifact flags."""
 
-    batch_std = np.std(data, axis=0, dtype=np.float64)
-    batch_max = np.max(np.abs(data), axis=0)
+    batch_std = np.std(data, axis=sample_axis, dtype=np.float32)
+    batch_max = np.max(np.abs(data), axis=sample_axis)
 
     if rolling_count == 0:
         next_sigma = batch_std.astype(np.float32)
@@ -25,7 +26,7 @@ def update_artifact_state(
 
     threshold = ARTIFACT_THRESHOLD_SIGMA * next_sigma
     artifact_flags = batch_max > threshold
-    return artifact_flags.astype(bool), next_sigma, rolling_count + data.shape[0]
+    return artifact_flags.astype(bool), next_sigma, rolling_count + data.shape[sample_axis]
 
 
 def apply_tanh_scaling(
