@@ -96,6 +96,11 @@ VALIDATION_WINDOW_SEC: float = 30.0
 # Maximum spike storage capacity
 MAX_SPIKES_IN_WINDOW: int = 500_000
 
+# Use a coarser slice for robust summary statistics on large batches.
+# Consecutive 20kHz samples are highly correlated, so full-batch quantiles are
+# not worth the latency cost on every 100ms frame.
+VALIDATION_SUMMARY_STRIDE: int = 4
+
 # Spike detection threshold in MAD units (negative for extracellular)
 SPIKE_DETECTION_THRESHOLD_MAD: float = -4.0
 
